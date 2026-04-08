@@ -799,6 +799,108 @@ def compute_valuation(ttm, price, mkt_cap):
     return v
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rolling TTM — daily fundamentals merged with price history
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_rolling_ttm(quarterly_df, price_hist, bs_df):
+    """
+    Rolling 4-quarter sum of flow metrics, forward-filled to daily price history.
+    Returns a DataFrame indexed by date with TTM fundamentals, per-share metrics,
+    margins, and valuation multiples.
+    """
+    if quarterly_df.empty or price_hist.empty:
+        return pd.DataFrame()
+
+    q = quarterly_df.copy()
+    q["period_end"] = pd.to_datetime(q["period_end"])
+    q = q.sort_values("period_end")
+
+    flow_cols = [c for c in ["Revenue","GrossProfit","OperatingIncome","NetIncome",
+                              "OperatingCF","FreeCashFlow","CapEx","EBITDA","DA"]
+                 if c in q.columns]
+
+    q_idx = q.set_index("period_end")[flow_cols].sort_index()
+    # Drop duplicate index entries
+    q_idx = q_idx[~q_idx.index.duplicated(keep="last")]
+    ttm = q_idx.rolling(4, min_periods=4).sum().dropna(how="all")
+
+    # Shares from quarterly if available, else annual
+    if "DilutedShares" in q.columns:
+        sh_s = q.set_index("period_end")["DilutedShares"].sort_index()
+        sh_s = sh_s[~sh_s.index.duplicated(keep="last")]
+        ttm["DilutedShares"] = sh_s.reindex(ttm.index, method="ffill")
+
+    # Balance sheet items (annual, forward-filled to quarter dates)
+    if not bs_df.empty:
+        for col in ["StockholdersEquity","TotalDebt","Cash","TotalAssets","DilutedShares"]:
+            if col in bs_df.columns and col not in ttm.columns:
+                s = bs_df.set_index("period_end")[col].sort_index()
+                s = s[~s.index.duplicated(keep="last")]
+                ttm[col] = s.reindex(ttm.index, method="ffill")
+
+    ttm = ttm.reset_index().rename(columns={"period_end": "date"})
+    ttm["date"] = pd.to_datetime(ttm["date"])
+
+    price_daily = price_hist[["Close"]].copy()
+    price_daily.index = pd.to_datetime(price_daily.index)
+    price_daily.index.name = "date"
+    price_daily = price_daily.reset_index().sort_values("date")
+
+    merged = pd.merge_asof(
+        price_daily, ttm.sort_values("date"),
+        on="date", direction="backward"
+    )
+    if merged.empty:
+        return pd.DataFrame()
+
+    sh = merged.get("DilutedShares", pd.Series(dtype=float)).replace(0, np.nan)
+
+    for label, col in [("EPS_TTM","NetIncome"), ("Rev_per_share","Revenue"),
+                        ("FCF_per_share","FreeCashFlow"), ("OCF_per_share","OperatingCF"),
+                        ("GP_per_share","GrossProfit"), ("EBITDA_per_share","EBITDA")]:
+        if col in merged.columns:
+            merged[label] = merged[col] / sh
+
+    if "StockholdersEquity" in merged.columns:
+        merged["Book_per_share"] = merged["StockholdersEquity"] / sh
+
+    rev = merged["Revenue"].replace(0, np.nan) if "Revenue" in merged.columns else None
+    if rev is not None:
+        for label, col in [("GrossMargin_TTM","GrossProfit"),
+                            ("OperatingMargin_TTM","OperatingIncome"),
+                            ("NetMargin_TTM","NetIncome"),
+                            ("FCFMargin_TTM","FreeCashFlow"),
+                            ("EBITDAMargin_TTM","EBITDA")]:
+            if col in merged.columns:
+                merged[label] = merged[col] / rev * 100
+
+    price = merged["Close"]
+    if "DilutedShares" in merged.columns:
+        mktcap = price * sh
+        td   = merged["TotalDebt"].fillna(0)  if "TotalDebt"  in merged.columns else 0
+        cash = merged["Cash"].fillna(0)        if "Cash"       in merged.columns else 0
+        ev   = mktcap + td - cash
+        merged["MarketCap"] = mktcap
+        merged["EV"]        = ev
+
+        for ratio, num in [("PE_TTM","NetIncome"), ("PFCF_TTM","FreeCashFlow"),
+                            ("PS_TTM","Revenue"),  ("POCF_TTM","OperatingCF"),
+                            ("PBook_TTM","StockholdersEquity")]:
+            if num in merged.columns:
+                denom = merged[num].replace(0, np.nan)
+                merged[ratio] = np.where(denom > 0, mktcap / denom, np.nan)
+
+        for ratio, num in [("EV_EBITDA","EBITDA"), ("EV_Sales","Revenue"),
+                            ("EV_FCF","FreeCashFlow"), ("EV_OCF","OperatingCF")]:
+            if num in merged.columns:
+                denom = merged[num].replace(0, np.nan)
+                merged[ratio] = np.where(denom > 0, ev / denom, np.nan)
+
+    return merged.set_index("date")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CAGR table
 # ─────────────────────────────────────────────────────────────────────────────
@@ -947,7 +1049,6 @@ fetch_btn = st.sidebar.button("🔍 Fetch Data", type="primary", use_container_w
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Display window**")
 n_annual   = st.sidebar.slider("Annual years to show",   min_value=3,  max_value=99, value=99, step=1)
-n_quarters = st.sidebar.slider("Quarters to show",       min_value=4,  max_value=99, value=99, step=1)
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
 **About**
@@ -960,7 +1061,9 @@ st.sidebar.markdown("""
 - 📈 Income Statement
 - 🏦 Balance Sheet
 - 💵 Cash Flow
-- 📅 Quarterly Breakdown
+- 📈 Per Share (TTM)
+- 💹 Valuation History
+- 🔀 Overlay
 - 📊 CAGR Tables
 """)
 
@@ -1020,7 +1123,8 @@ price    = _safe(yf_info.get("currentPrice") or yf_info.get("regularMarketPrice"
 mkt_cap  = _safe(yf_info.get("marketCap"))
 val      = compute_valuation(ttm, price, mkt_cap)
 ev       = val.pop("_ev", None)
-cagr_df  = build_cagr_table(income_df, cf_df)
+cagr_df      = build_cagr_table(income_df, cf_df)
+rolling_ttm  = build_rolling_ttm(quarterly_df, price_hist, bs_df)
 
 company_name = yf_info.get("longName") or yf_info.get("shortName") or ticker
 sector       = yf_info.get("sector", "—")
@@ -1064,7 +1168,9 @@ tabs = st.tabs([
     "📈 Income",
     "🏦 Balance Sheet",
     "💵 Cash Flow",
-    "📅 Quarterly",
+    "📈 Per Share",
+    "💹 Valuation History",
+    "🔀 Overlay",
     "📊 CAGRs",
     "🗂 Raw XBRL",
 ])
@@ -1220,82 +1326,296 @@ with tabs[3]:
         st.dataframe(df_c[disp].sort_values("Year", ascending=False).head(n_annual), hide_index=True, use_container_width=True)
 
 
-# ── Tab 4: Quarterly Breakdown ────────────────────────────────────────────────
+# ── Tab 4: Per Share (TTM) ───────────────────────────────────────────────────
 with tabs[4]:
-    if quarterly_df.empty:
-        st.warning("No quarterly data available.")
-    else:
-        q = quarterly_df.copy()
+    has_ttm = not rolling_ttm.empty
 
-        # ── Revenue + Gross Profit ───────────────────────────────────────────
-        st.markdown('<div class="section-header">Revenue & Gross Profit</div>', unsafe_allow_html=True)
-        rev_cols = [c for c in ["Revenue","GrossProfit"] if c in q.columns]
-        if rev_cols:
-            fig_qrev = bar_chart(q.tail(n_quarters), "period_label", rev_cols,
-                                 "Quarterly Revenue & Gross Profit ($B)")
-            st.plotly_chart(fig_qrev, use_container_width=True)
-
-        # ── Operating & Net Income ───────────────────────────────────────────
-        inc_cols = [c for c in ["OperatingIncome","NetIncome"] if c in q.columns]
-        if inc_cols:
-            fig_qni = bar_chart(q.tail(n_quarters), "period_label", inc_cols,
-                                "Quarterly Operating & Net Income ($B)")
-            st.plotly_chart(fig_qni, use_container_width=True)
-
-        # ── YoY Revenue growth (same quarter prior year) ─────────────────────
-        if "Revenue" in q.columns:
-            st.markdown('<div class="section-header">Revenue YoY Growth (same quarter)</div>', unsafe_allow_html=True)
-            q_sorted = q.sort_values(["quarter","fy"]).copy()
-            q_sorted["RevYoY"] = q_sorted.groupby("quarter")["Revenue"].pct_change() * 100
-            q_sorted = q_sorted.sort_values(["fy","quarter"])
-            fig_yoy = go.Figure()
-            yoy_tail = q_sorted.tail(n_quarters)
-            colors_yoy = ["#6BCB77" if v >= 0 else "#FF6B6B"
-                          for v in yoy_tail["RevYoY"].fillna(0)]
-            fig_yoy.add_trace(go.Bar(
-                x=yoy_tail["period_label"], y=yoy_tail["RevYoY"],
-                marker_color=colors_yoy, name="Rev YoY %",
+    # Helper: plot an annual scatter + optional continuous TTM line
+    def _ps_fig(ann_x, ann_y, ttm_col, label, yaxis_title="$"):
+        fig = go.Figure()
+        if has_ttm and ttm_col in rolling_ttm.columns:
+            r = rolling_ttm[ttm_col].dropna()
+            r = r[r.index >= r.index[0]]
+            fig.add_trace(go.Scatter(
+                x=r.index, y=r.values, mode="lines", name=f"{label} TTM",
+                line=dict(color="#00A0A0", width=1.8),
             ))
-            fig_yoy.update_layout(
-                title="Revenue YoY Growth %",
+        valid = [(x, y) for x, y in zip(ann_x, ann_y)
+                 if y is not None and not (isinstance(y, float) and np.isnan(y))]
+        if valid:
+            xs, ys = zip(*valid)
+            fig.add_trace(go.Scatter(
+                x=list(xs), y=[v for v in ys], mode="markers",
+                name=f"{label} Annual",
+                marker=dict(color="#FFD166", size=9, symbol="circle"),
+            ))
+        fig.update_layout(
+            title=label,
+            plot_bgcolor="#1e2433", paper_bgcolor="#1e2433",
+            font=dict(color="#c9d1d9", size=12),
+            xaxis=dict(gridcolor="#2e3550"),
+            yaxis=dict(gridcolor="#2e3550", title=yaxis_title),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            height=320, margin=dict(t=50, b=30, l=50, r=20),
+        )
+        return fig
+
+    if income_df.empty:
+        st.warning("No data.")
+    else:
+        df_ps = income_df.sort_values("period_end").copy()
+        sh_a  = df_ps["DilutedShares"].replace(0, np.nan)
+        dates_a = df_ps["period_end"].values
+
+        st.markdown('<div class="section-header">Earnings Per Share</div>', unsafe_allow_html=True)
+        eps_a = (df_ps["NetIncome"] / sh_a).values
+        st.plotly_chart(_ps_fig(dates_a, eps_a, "EPS_TTM", "EPS (Diluted)", "$"), use_container_width=True)
+
+        st.markdown('<div class="section-header">Revenue Per Share</div>', unsafe_allow_html=True)
+        rev_a = (df_ps["Revenue"] / sh_a).values
+        st.plotly_chart(_ps_fig(dates_a, rev_a, "Rev_per_share", "Revenue / Share", "$"), use_container_width=True)
+
+        if not cf_df.empty and "FreeCashFlow" in cf_df.columns:
+            st.markdown('<div class="section-header">Free Cash Flow Per Share</div>', unsafe_allow_html=True)
+            cf_a = cf_df.sort_values("period_end")
+            sh_cf = sh_a.reindex(cf_df.sort_values("period_end").index)
+            fcf_a = (cf_df.sort_values("period_end")["FreeCashFlow"] / sh_a.values).values
+            dates_cf = cf_df.sort_values("period_end")["period_end"].values
+            st.plotly_chart(_ps_fig(dates_cf, fcf_a, "FCF_per_share", "FCF / Share", "$"), use_container_width=True)
+
+        if not bs_df.empty and "StockholdersEquity" in bs_df.columns:
+            st.markdown('<div class="section-header">Book Value Per Share</div>', unsafe_allow_html=True)
+            bs_s = bs_df.sort_values("period_end")
+            sh_b = sh_a.reindex(bs_s.index).values
+            # align shares using period proximity
+            sh_ann = income_df.set_index("period_end")["DilutedShares"].replace(0, np.nan)
+            bvps = []
+            for _, row in bs_s.iterrows():
+                eq  = _safe(row.get("StockholdersEquity"))
+                # find closest annual shares
+                diffs = (income_df["period_end"] - row["period_end"]).abs()
+                closest = income_df.loc[diffs.idxmin(), "DilutedShares"] if not diffs.empty else None
+                closest = _safe(closest)
+                bvps.append(eq / closest if eq and closest and closest > 0 else None)
+            st.plotly_chart(_ps_fig(bs_s["period_end"].values, bvps, "Book_per_share", "Book Value / Share", "$"), use_container_width=True)
+
+        # Summary table
+        st.markdown('<div class="section-header">Annual Per-Share Table</div>', unsafe_allow_html=True)
+        ps_rows = []
+        for _, row in df_ps.iterrows():
+            sh_v = _safe(row.get("DilutedShares"))
+            if not sh_v or sh_v == 0:
+                continue
+            r = {"Year": str(row["period_end"])[:4],
+                 "EPS": _safe(row.get("NetIncome"))  / sh_v if _safe(row.get("NetIncome")) else None,
+                 "Rev/Sh": _safe(row.get("Revenue")) / sh_v if _safe(row.get("Revenue")) else None,
+                 "GP/Sh":  _safe(row.get("GrossProfit")) / sh_v if _safe(row.get("GrossProfit")) else None,
+                 "EBITDA/Sh": _safe(row.get("EBITDA")) / sh_v if _safe(row.get("EBITDA")) else None}
+            if not cf_df.empty:
+                cf_row = cf_df[cf_df["period_end"].dt.year == row["period_end"].year]
+                if not cf_row.empty:
+                    fcf = _safe(cf_row.iloc[-1].get("FreeCashFlow"))
+                    r["FCF/Sh"] = fcf / sh_v if fcf else None
+            ps_rows.append(r)
+        if ps_rows:
+            ps_tbl = pd.DataFrame(ps_rows).sort_values("Year", ascending=False)
+            st.dataframe(ps_tbl, hide_index=True, use_container_width=True)
+
+
+# ── Tab 5: Valuation History ──────────────────────────────────────────────────
+with tabs[5]:
+    RATIO_META = {
+        "PE_TTM":    ("P/E",        (0, 80)),
+        "PFCF_TTM":  ("P/FCF",      (0, 80)),
+        "PS_TTM":    ("P/Sales",    (0, 30)),
+        "POCF_TTM":  ("P/OCF",      (0, 60)),
+        "PBook_TTM": ("P/Book",     (0, 30)),
+        "EV_EBITDA": ("EV/EBITDA",  (0, 60)),
+        "EV_Sales":  ("EV/Sales",   (0, 30)),
+        "EV_FCF":    ("EV/FCF",     (0, 80)),
+    }
+
+    if rolling_ttm.empty:
+        st.warning("Rolling TTM not available — need quarterly data from EDGAR.")
+    else:
+        available_ratios = {k: v for k, v in RATIO_META.items() if k in rolling_ttm.columns}
+        if not available_ratios:
+            st.warning("No ratio columns computed.")
+        else:
+            selected_ratios = st.multiselect(
+                "Ratios to display",
+                options=list(available_ratios.keys()),
+                default=list(available_ratios.keys())[:4],
+                format_func=lambda k: available_ratios[k][0],
+            )
+            show_bands = st.checkbox("Show 25/75 percentile band", value=True)
+
+            for col in selected_ratios:
+                label, (ymin, ymax) = available_ratios[col]
+                s = rolling_ttm[col].dropna()
+                # clip extreme outliers (ratio > 5× 95th pct)
+                p95 = s.quantile(0.95)
+                s = s.clip(upper=min(ymax * 3, p95 * 5))
+                s = s[s > 0]
+                if s.empty:
+                    continue
+
+                med  = s.median()
+                p25  = s.quantile(0.25)
+                p75  = s.quantile(0.75)
+
+                fig_r = go.Figure()
+                if show_bands:
+                    fig_r.add_hrect(y0=p25, y1=p75,
+                                    fillcolor="rgba(0,160,160,0.08)",
+                                    line_width=0, annotation_text="25–75%",
+                                    annotation_position="top left",
+                                    annotation_font_color="#888")
+                    fig_r.add_hline(y=med, line_dash="dash",
+                                    line_color="#FFA500",
+                                    annotation_text=f"Median {med:.1f}x",
+                                    annotation_position="top right",
+                                    annotation_font_color="#FFA500")
+                fig_r.add_trace(go.Scatter(
+                    x=s.index, y=s.values, mode="lines", name=label,
+                    line=dict(color="#00A0A0", width=1.5),
+                ))
+                fig_r.update_layout(
+                    title=f"{label} — Rolling TTM",
+                    plot_bgcolor="#1e2433", paper_bgcolor="#1e2433",
+                    font=dict(color="#c9d1d9", size=12),
+                    xaxis=dict(gridcolor="#2e3550"),
+                    yaxis=dict(gridcolor="#2e3550", title=f"{label}",
+                               range=[0, min(ymax, s.quantile(0.98) * 1.2)]),
+                    height=300, margin=dict(t=50, b=30, l=50, r=20),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_r, use_container_width=True)
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric(f"{label} Current", f"{s.iloc[-1]:.1f}x" if len(s) else "—")
+                c2.metric("Median", f"{med:.1f}x")
+                c3.metric("25th pct", f"{p25:.1f}x")
+                c4.metric("75th pct", f"{p75:.1f}x")
+                st.markdown("---")
+
+
+# ── Tab 6: Overlay ────────────────────────────────────────────────────────────
+with tabs[6]:
+    # Build catalogue of plottable series
+    OVERLAY_CATALOG = {}
+
+    # Annual fundamentals ($B)
+    if not income_df.empty:
+        df_ann = income_df.set_index("period_end").sort_index()
+        for col, label in [("Revenue","Revenue ($B)"), ("GrossProfit","Gross Profit ($B)"),
+                            ("OperatingIncome","Op Income ($B)"), ("EBITDA","EBITDA ($B)"),
+                            ("NetIncome","Net Income ($B)"),
+                            ("GrossMargin","Gross Margin %"),("OperatingMargin","Op Margin %"),
+                            ("EBITDAMargin","EBITDA Margin %")]:
+            if col in df_ann.columns:
+                s = df_ann[col].dropna()
+                OVERLAY_CATALOG[label] = s / (1e9 if "$B" in label else 1)
+
+    if not cf_df.empty:
+        df_cf_i = cf_df.set_index("period_end").sort_index()
+        for col, label in [("FreeCashFlow","FCF ($B)"),("OperatingCF","Op CF ($B)"),("CapEx","CapEx ($B)")]:
+            if col in df_cf_i.columns:
+                OVERLAY_CATALOG[label] = df_cf_i[col].dropna() / 1e9
+
+    if not bs_df.empty:
+        df_bs_i = bs_df.set_index("period_end").sort_index()
+        for col, label in [("TotalDebt","Total Debt ($B)"),("Cash","Cash ($B)"),
+                            ("StockholdersEquity","Equity ($B)"),("TotalAssets","Assets ($B)")]:
+            if col in df_bs_i.columns:
+                OVERLAY_CATALOG[label] = df_bs_i[col].dropna() / 1e9
+
+    # TTM series
+    if not rolling_ttm.empty:
+        for col, label in [
+            ("EPS_TTM","EPS TTM"), ("Rev_per_share","Rev/Share TTM"),
+            ("FCF_per_share","FCF/Share TTM"), ("Book_per_share","Book/Share TTM"),
+            ("GrossMargin_TTM","Gross Margin TTM %"), ("OperatingMargin_TTM","Op Margin TTM %"),
+            ("NetMargin_TTM","Net Margin TTM %"), ("FCFMargin_TTM","FCF Margin TTM %"),
+            ("PE_TTM","P/E TTM"), ("PFCF_TTM","P/FCF TTM"),
+            ("PS_TTM","P/Sales TTM"), ("EV_EBITDA","EV/EBITDA TTM"),
+        ]:
+            if col in rolling_ttm.columns:
+                s = rolling_ttm[col].dropna()
+                if not s.empty:
+                    OVERLAY_CATALOG[label] = s
+
+    # Price
+    if not price_hist.empty:
+        OVERLAY_CATALOG["Price ($)"] = price_hist["Close"].dropna()
+
+    if not OVERLAY_CATALOG:
+        st.warning("No data available for overlay.")
+    else:
+        all_labels = sorted(OVERLAY_CATALOG.keys())
+        default_sel = [l for l in ["Rev/Share TTM","EPS TTM","FCF/Share TTM","Price ($)"]
+                       if l in all_labels][:4]
+        selected = st.multiselect("Select series to overlay", all_labels, default=default_sel)
+        normalize = st.checkbox("Normalize to 100 at start", value=False)
+        dual_axis = st.checkbox("Dual Y-axis (right axis for 2nd series)", value=False)
+
+        if selected:
+            fig_ov = go.Figure()
+            for i, label in enumerate(selected):
+                s = OVERLAY_CATALOG[label].copy()
+                s = s.sort_index()
+                if normalize:
+                    first_valid = s.dropna().iloc[0] if not s.dropna().empty else None
+                    if first_valid and first_valid != 0:
+                        s = s / first_valid * 100
+                yaxis = "y2" if dual_axis and i == 1 else "y"
+                fig_ov.add_trace(go.Scatter(
+                    x=s.index, y=s.values,
+                    mode="lines", name=label,
+                    line=dict(color=PLOT_COLORS[i % len(PLOT_COLORS)], width=1.8),
+                    yaxis=yaxis,
+                ))
+            layout = dict(
+                title="Overlay Chart",
                 plot_bgcolor="#1e2433", paper_bgcolor="#1e2433",
                 font=dict(color="#c9d1d9", size=12),
-                xaxis=dict(gridcolor="#2e3550", tickangle=-30),
-                yaxis=dict(gridcolor="#2e3550", title="YoY %"),
-                height=350, margin=dict(t=50, b=60),
+                xaxis=dict(gridcolor="#2e3550"),
+                yaxis=dict(gridcolor="#2e3550", title="Normalized (100)" if normalize else "Value"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                height=480, margin=dict(t=60, b=30, l=60, r=60),
             )
-            st.plotly_chart(fig_yoy, use_container_width=True)
+            if dual_axis and len(selected) > 1:
+                layout["yaxis2"] = dict(
+                    title=selected[1], overlaying="y", side="right",
+                    gridcolor="#2e3550", showgrid=False,
+                )
+            fig_ov.update_layout(**layout)
+            st.plotly_chart(fig_ov, use_container_width=True)
 
-        # ── Margins ─────────────────────────────────────────────────────────
-        mg_cols = [c for c in ["GrossMargin","OperatingMargin","EBITDAMargin"] if c in q.columns]
-        if mg_cols:
-            st.markdown('<div class="section-header">Quarterly Margins</div>', unsafe_allow_html=True)
-            fig_qmg = line_chart(q.tail(n_quarters), "period_label", mg_cols, "Quarterly Margins %")
-            st.plotly_chart(fig_qmg, use_container_width=True)
-
-        # ── Cash Flow ────────────────────────────────────────────────────────
-        cf_cols = [c for c in ["OperatingCF","FreeCashFlow","CapEx"] if c in q.columns]
-        if cf_cols:
-            st.markdown('<div class="section-header">Quarterly Cash Flow</div>', unsafe_allow_html=True)
-            fig_qcf = bar_chart(q.tail(n_quarters), "period_label", cf_cols,
-                                "Quarterly Cash Flow ($B)")
-            st.plotly_chart(fig_qcf, use_container_width=True)
-
-        # ── Data table ──────────────────────────────────────────────────────
-        st.markdown('<div class="section-header">Quarterly Data Table</div>', unsafe_allow_html=True)
-        display_q = [c for c in [
-            "period_label","Revenue","GrossProfit","GrossMargin",
-            "OperatingIncome","OperatingMargin","EBITDA","EBITDAMargin",
-            "NetIncome","OperatingCF","CapEx","FreeCashFlow",
-        ] if c in q.columns]
-        st.dataframe(
-            q[display_q].sort_values("period_label", ascending=False).head(n_quarters),
-            hide_index=True, use_container_width=True,
-        )
+            # Date range filter
+            all_dates = []
+            for label in selected:
+                s = OVERLAY_CATALOG[label].dropna()
+                if not s.empty:
+                    all_dates.extend([s.index.min(), s.index.max()])
+            if all_dates:
+                min_d = min(all_dates)
+                max_d = max(all_dates)
+                if min_d < max_d:
+                    start_y, end_y = st.slider(
+                        "Year range",
+                        min_value=int(min_d.year), max_value=int(max_d.year),
+                        value=(int(min_d.year), int(max_d.year)),
+                    )
+                    if start_y != int(min_d.year) or end_y != int(max_d.year):
+                        fig_ov.update_xaxes(
+                            range=[f"{start_y}-01-01", f"{end_y}-12-31"]
+                        )
+                        st.plotly_chart(fig_ov, use_container_width=True, key="ov2")
 
 
-# ── Tab 5: CAGR Tables ───────────────────────────────────────────────────────
-with tabs[5]:
+# ── Tab 7: CAGR Tables ───────────────────────────────────────────────────────
+with tabs[7]:
     st.markdown("CAGR calculated from the most recent annual value back N years, on a **per-share** basis.")
 
     if not cagr_df.empty:
@@ -1325,11 +1645,11 @@ with tabs[5]:
             st.caption(f"Heatmap skipped: {e}")
 
 
-# ── Tab 6: Raw XBRL ───────────────────────────────────────────────────────────
-with tabs[6]:
+# ── Tab 8: Raw XBRL ───────────────────────────────────────────────────────────
+with tabs[8]:
     st.markdown("Raw annual XBRL facts from SEC EDGAR, split into flow (income/CF) and instant (balance sheet).")
 
-    raw_sub = tabs[6]
+    raw_sub = tabs[8]
 
     col_flow, col_inst = st.columns(2)
 
