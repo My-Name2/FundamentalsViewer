@@ -222,6 +222,128 @@ def _build_from_concepts(df_annual, concepts, ifrs_concepts=None):
     return pivot
 
 
+def _facts_to_df(facts) -> pd.DataFrame:
+    """
+    Convert an edgartools EntityFacts object to a normalized DataFrame.
+    Handles API differences across edgartools versions (2.x vs 3.x).
+    The returned DataFrame always has these columns:
+        form_type, period_end, period_start, numeric_value,
+        accession_no, filing_date, concept, namespace
+    where concept = "namespace:tag".
+    """
+    raw = None
+
+    # ── Strategy 1: edgartools 2.x  (facts.to_pandas()) ─────────────────────
+    if hasattr(facts, "to_pandas"):
+        try:
+            raw = facts.to_pandas()
+        except Exception:
+            raw = None
+
+    # ── Strategy 2: some intermediate versions used to_dataframe() ──────────
+    if raw is None and hasattr(facts, "to_dataframe"):
+        try:
+            raw = facts.to_dataframe()
+        except Exception:
+            raw = None
+
+    # ── Strategy 3: edgartools 3.x stores facts as a dict of DataFrames ─────
+    # facts.facts is typically {namespace: DataFrame} or a single DataFrame
+    if raw is None and hasattr(facts, "facts"):
+        inner = facts.facts
+        if isinstance(inner, pd.DataFrame):
+            raw = inner.copy()
+        elif isinstance(inner, dict):
+            parts = []
+            for ns, df in inner.items():
+                if isinstance(df, pd.DataFrame):
+                    df = df.copy()
+                    df["namespace"] = ns
+                    parts.append(df)
+            if parts:
+                raw = pd.concat(parts, ignore_index=True)
+
+    # ── Strategy 4: iterate the public dict-like interface ───────────────────
+    if raw is None:
+        try:
+            parts = []
+            for ns in ("us-gaap", "ifrs-full", "dei"):
+                try:
+                    ns_facts = facts[ns]          # may raise KeyError
+                    if ns_facts is None:
+                        continue
+                    if hasattr(ns_facts, "to_pandas"):
+                        df = ns_facts.to_pandas()
+                    elif hasattr(ns_facts, "to_dataframe"):
+                        df = ns_facts.to_dataframe()
+                    else:
+                        continue
+                    df["namespace"] = ns
+                    parts.append(df)
+                except (KeyError, TypeError):
+                    continue
+            if parts:
+                raw = pd.concat(parts, ignore_index=True)
+        except Exception:
+            raw = None
+
+    if raw is None or raw.empty:
+        raise ValueError(
+            "Could not extract facts from EntityFacts object. "
+            "Try: pip install --upgrade edgartools"
+        )
+
+    # ── Normalise column names across versions ───────────────────────────────
+    # Different versions use different names; map everything to a canonical set.
+    rename_map = {
+        # edgartools 2.x column names
+        "form":   "form_type",
+        "end":    "period_end",
+        "start":  "period_start",
+        "val":    "numeric_value",
+        "accn":   "accession_no",
+        "filed":  "filing_date",
+        "fact":   "concept",
+        # edgartools 3.x / alternative names
+        "form_type":      "form_type",
+        "period_end":     "period_end",
+        "period_start":   "period_start",
+        "numeric_value":  "numeric_value",
+        "value":          "numeric_value",
+        "accession_no":   "accession_no",
+        "accession":      "accession_no",
+        "filing_date":    "filing_date",
+        "filed_date":     "filing_date",
+        "concept":        "concept",
+        "tag":            "concept",
+    }
+    raw = raw.rename(columns={k: v for k, v in rename_map.items() if k in raw.columns})
+
+    # Ensure namespace column exists
+    if "namespace" not in raw.columns:
+        # Try to split concept if it contains ":"
+        if "concept" in raw.columns and raw["concept"].str.contains(":").any():
+            raw[["namespace", "concept"]] = raw["concept"].str.split(":", n=1, expand=True)
+        else:
+            raw["namespace"] = "us-gaap"
+
+    # Build full concept string "namespace:tag" if not already there
+    if "concept" in raw.columns and not raw["concept"].str.contains(":").all():
+        raw["concept"] = raw["namespace"] + ":" + raw["concept"]
+
+    # Ensure required columns exist with sensible defaults
+    for col, default in [
+        ("period_start", pd.NaT),
+        ("accession_no", ""),
+        ("filing_date",  pd.NaT),
+        ("form_type",    ""),
+    ]:
+        if col not in raw.columns:
+            raw[col] = default
+
+    return raw
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_edgar(ticker: str, email: str):
     """Return (income_df, bs_df, cf_df, quarterly_df, raw) or raise."""
@@ -233,12 +355,7 @@ def fetch_edgar(ticker: str, email: str):
     if facts is None:
         raise ValueError(f"No EDGAR facts for {ticker}")
 
-    raw = facts.to_pandas().rename(columns={
-        "form": "form_type", "end": "period_end", "start": "period_start",
-        "val": "numeric_value", "accn": "accession_no",
-        "filed": "filing_date", "fact": "concept",
-    })
-    raw["concept"] = raw["namespace"] + ":" + raw["concept"]
+    raw = _facts_to_df(facts)
 
     flow_raw    = _filter_annual_flow(raw)
     instant_raw = _filter_annual_instant(raw)
@@ -702,6 +819,7 @@ st.sidebar.markdown("""
 **About**
 - All financial data pulled live from **SEC EDGAR** via `edgartools`
 - Price / market cap from **yfinance**
+- No Macrotrends dependency
 
 **Sections**
 - 📌 Overview & Valuation
