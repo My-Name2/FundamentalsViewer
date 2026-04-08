@@ -1,7 +1,7 @@
 # EDGAR Financial Dashboard
 
-Single-file Streamlit app that pulls all data live from SEC EDGAR.
-No Macrotrends. No API keys beyond a free SEC identity email.
+Pulls all data live from SEC EDGAR.
+No API keys beyond a free SEC identity email.
 
 ---
 
