@@ -1378,9 +1378,14 @@ with tabs[4]:
         if not cf_df.empty and "FreeCashFlow" in cf_df.columns:
             st.markdown('<div class="section-header">Free Cash Flow Per Share</div>', unsafe_allow_html=True)
             cf_a = cf_df.sort_values("period_end")
-            sh_cf = sh_a.reindex(cf_df.sort_values("period_end").index)
-            fcf_a = (cf_df.sort_values("period_end")["FreeCashFlow"] / sh_a.values).values
-            dates_cf = cf_df.sort_values("period_end")["period_end"].values
+            _cf_s = cf_df.sort_values("period_end").copy()
+            _cf_s["_year"] = _cf_s["period_end"].dt.year
+            _sh_s = df_ps[["period_end","DilutedShares"]].copy()
+            _sh_s["_year"] = _sh_s["period_end"].dt.year
+            _cf_merged = _cf_s.merge(_sh_s[["_year","DilutedShares"]], on="_year", how="left")
+            _sh_aligned = _cf_merged["DilutedShares"].replace(0, np.nan)
+            fcf_a  = (_cf_merged["FreeCashFlow"] / _sh_aligned).values
+            dates_cf = _cf_merged["period_end"].values
             st.plotly_chart(_ps_fig(dates_cf, fcf_a, "FCF_per_share", "FCF / Share", "$"), use_container_width=True)
 
         if not bs_df.empty and "StockholdersEquity" in bs_df.columns:
