@@ -107,6 +107,7 @@ def cagr(start, end, years):
 
 ANNUAL_FORMS = {"10-K", "10-K405", "10-KSB", "20-F", "20-F/A"}
 
+# ── Full concept lists (mirrors the working tkinter dashboard) ────────────────
 CF_CONCEPTS = {
     "NetCashProvidedByUsedInOperatingActivities": "OperatingCF",
     "NetCashProvidedByUsedInInvestingActivities": "InvestingCF",
@@ -114,62 +115,147 @@ CF_CONCEPTS = {
     "PaymentsToAcquirePropertyPlantAndEquipment": "CapEx",
 }
 CF_CONCEPTS_IFRS = {
-    "CashFlowsFromUsedInOperatingActivities": "OperatingCF",
-    "CashFlowsFromOperations": "OperatingCF",
-    "CashFlowsFromUsedInInvestingActivities": "InvestingCF",
-    "CashFlowsFromUsedInFinancingActivities": "FinancingCF",
+    "CashFlowsFromUsedInOperatingActivities":                             "OperatingCF",
+    "CashFlowsFromOperations":                                            "OperatingCF",
+    "CashFlowsFromUsedInInvestingActivities":                             "InvestingCF",
+    "CashFlowsFromUsedInFinancingActivities":                             "FinancingCF",
     "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities": "CapEx",
-    "AcquisitionOfPropertyPlantAndEquipment": "CapEx",
-    "PurchaseOfPropertyPlantAndEquipment": "CapEx",
+    "AcquisitionOfPropertyPlantAndEquipment":                             "CapEx",
+    "PurchaseOfPropertyPlantAndEquipment":                                "CapEx",
 }
 INC_CONCEPTS = {
-    "Revenue": ["Revenues","RevenueFromContractWithCustomerExcludingAssessedTax",
-                "RevenueFromContractWithCustomerIncludingAssessedTax","SalesRevenueNet"],
-    "CostOfSales": ["CostOfRevenue","CostOfGoodsSold","CostOfGoodsAndServicesSold"],
+    "Revenue": [
+        "Revenues",
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "RevenueFromContractWithCustomerIncludingAssessedTax",
+        "SalesRevenueNet",
+        "SalesRevenueGoodsNet",
+        "SalesRevenueServicesNet",
+        "RegulatedAndUnregulatedOperatingRevenue",
+        "RevenuesNetOfInterestExpense",
+    ],
+    "CostOfSales": [
+        "CostOfRevenue",
+        "CostOfGoodsSold",
+        "CostOfGoodsAndServicesSold",
+        "CostOfGoodsAndServiceExcludingDepletionDepreciationAndAmortization",
+        "CostOfServices",
+    ],
+    "OperatingExpenses": [
+        "OperatingExpenses",
+        "CostsAndExpenses",
+    ],
     "OperatingIncome": ["OperatingIncomeLoss"],
-    "DA": ["DepreciationDepletionAndAmortization","DepreciationAndAmortization","Depreciation"],
-    "InterestExpense": ["InterestExpense","InterestAndDebtExpense"],
+    "DA": [
+        "DepreciationDepletionAndAmortization",
+        "DepreciationAndAmortization",
+        "Depreciation",
+        "DepreciationAmortizationAndAccretionNet",
+    ],
+    "InterestExpense": [
+        "InterestExpense",
+        "InterestAndDebtExpense",
+        "InterestExpenseDebt",
+    ],
     "TaxExpense": ["IncomeTaxExpense"],
-    "PreTaxIncome": ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"],
-    "NetIncome": ["NetIncomeLoss","ProfitLoss","IncomeLossFromContinuingOperations"],
-    "DilutedShares": ["WeightedAverageNumberOfDilutedSharesOutstanding",
-                      "WeightedAverageNumberOfShareOutstandingBasicAndDiluted"],
-    "EPSDiluted": ["EarningsPerShareDiluted","EarningsPerShareBasicAndDiluted"],
+    "PreTaxIncome": [
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
+    ],
+    "NetIncome": [
+        "NetIncomeLoss",
+        "NetIncomeLossAvailableToCommonStockholdersBasic",
+        "ProfitLoss",
+        "IncomeLossFromContinuingOperations",
+        "NetIncomeLossAttributableToParent",
+    ],
+    "DilutedShares": [
+        "WeightedAverageNumberOfDilutedSharesOutstanding",
+        "WeightedAverageNumberOfShareOutstandingBasicAndDiluted",
+    ],
+    "EPSDiluted": [
+        "EarningsPerShareDiluted",
+        "IncomeLossFromContinuingOperationsPerDilutedShare",
+        "EarningsPerShareBasicAndDiluted",
+    ],
 }
 INC_CONCEPTS_IFRS = {
-    "Revenue": ["Revenue","RevenueFromContractsWithCustomers"],
-    "CostOfSales": ["CostOfSales","CostOfGoodsAndServicesRendered"],
-    "OperatingIncome": ["ProfitLossFromOperatingActivities","OperatingProfit"],
-    "DA": ["DepreciationAmortisationAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss"],
-    "InterestExpense": ["FinanceCosts","InterestExpense"],
-    "TaxExpense": ["IncomeTaxExpenseContinuingOperations"],
+    "Revenue": [
+        "Revenue",
+        "RevenueFromContractsWithCustomers",
+        "RevenueFromSaleOfGoods",
+        "RevenueFromRenderingOfServices",
+    ],
+    "CostOfSales": ["CostOfSales", "CostOfGoodsAndServicesRendered"],
+    "OperatingIncome": [
+        "ProfitLossFromOperatingActivities",
+        "OperatingProfit",
+        "ProfitLossBeforeFinanceCostsAndIncomeTax",
+    ],
+    "DA": [
+        "DepreciationAmortisationAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss",
+        "DepreciationAndAmortisationExpense",
+        "AdjustmentsForDepreciationAndAmortisationExpense",
+    ],
+    "InterestExpense": ["FinanceCosts", "InterestExpense"],
+    "TaxExpense": ["IncomeTaxExpenseContinuingOperations", "IncomeTaxExpense"],
     "PreTaxIncome": ["ProfitLossBeforeTax"],
-    "NetIncome": ["ProfitLossAttributableToOwnersOfParent","ProfitLoss"],
-    "DilutedShares": ["WeightedAverageNumberOfSharesOutstandingDiluted"],
-    "EPSDiluted": ["DilutedEarningsLossPerShare"],
+    "NetIncome": [
+        "ProfitLossAttributableToOwnersOfParent",
+        "ProfitLossAttributableToEquityHoldersOfParent",
+        "ProfitLoss",
+    ],
+    "DilutedShares": [
+        "WeightedAverageNumberOfSharesOutstandingDiluted",
+        "WeightedAverageShares",
+    ],
+    "EPSDiluted": ["DilutedEarningsLossPerShare", "BasicEarningsLossPerShare"],
 }
 BS_CONCEPTS = {
-    "Cash": ["CashAndCashEquivalentsAtCarryingValue","CashCashEquivalentsAndShortTermInvestments"],
-    "CurrentAssets": ["AssetsCurrent"],
-    "TotalAssets": ["Assets"],
+    "Cash": [
+        "CashAndCashEquivalentsAtCarryingValue",
+        "CashCashEquivalentsAndShortTermInvestments",
+        "CashAndCashEquivalentsAndShortTermInvestments",
+        "CashAndDueFromBanks",
+    ],
+    "CurrentAssets":    ["AssetsCurrent"],
+    "TotalAssets":      ["Assets"],
     "CurrentLiabilities": ["LiabilitiesCurrent"],
-    "CurrentDebt": ["LongTermDebtCurrent","DebtCurrent","ShortTermBorrowings"],
-    "LongTermDebt": ["LongTermDebt","LongTermDebtNoncurrent"],
+    "CurrentDebt": [
+        "LongTermDebtCurrent",
+        "LongTermDebtAndCapitalLeaseObligationsCurrent",
+        "DebtCurrent",
+        "ShortTermBorrowings",
+        "CommercialPaper",
+    ],
+    "LongTermDebt": [
+        "LongTermDebt",
+        "LongTermDebtNoncurrent",
+        "LongTermNotesPayable",
+        "LongTermDebtAndCapitalLeaseObligations",
+    ],
     "TotalLiabilities": ["Liabilities"],
-    "TotalLiabilitiesAndEquity": ["LiabilitiesAndStockholdersEquity"],
-    "StockholdersEquity": ["StockholdersEquity","MembersEquity"],
+    "TotalLiabilitiesAndEquity": ["LiabilitiesAndStockholdersEquity", "LiabilitiesAndPartnersCapital"],
+    "StockholdersEquity": [
+        "StockholdersEquity",
+        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+        "MembersEquity",
+    ],
 }
 BS_CONCEPTS_IFRS = {
-    "Cash": ["CashAndCashEquivalents"],
-    "CurrentAssets": ["CurrentAssets"],
-    "TotalAssets": ["Assets"],
+    "Cash":             ["CashAndCashEquivalents"],
+    "CurrentAssets":    ["CurrentAssets"],
+    "TotalAssets":      ["Assets"],
     "CurrentLiabilities": ["CurrentLiabilities"],
-    "LongTermDebt": ["NoncurrentPortionOfNoncurrentBorrowings","NoncurrentBorrowings"],
+    "CurrentDebt":      ["CurrentPortionOfNoncurrentBorrowings", "CurrentBorrowings"],
+    "LongTermDebt":     ["NoncurrentPortionOfNoncurrentBorrowings", "NoncurrentBorrowings"],
     "TotalLiabilities": ["Liabilities"],
     "TotalLiabilitiesAndEquity": ["EquityAndLiabilities"],
-    "StockholdersEquity": ["EquityAttributableToOwnersOfParent","Equity"],
+    "StockholdersEquity": ["EquityAttributableToOwnersOfParent", "Equity"],
 }
 
+
+# ── Core EDGAR helpers (mirrors the working tkinter dashboard exactly) ────────
 
 def _prep_dates(df):
     df = df.copy()
@@ -179,37 +265,89 @@ def _prep_dates(df):
     return df
 
 
-def _filter_annual_flow(df):
-    df = _prep_dates(df[df["form_type"].isin(ANNUAL_FORMS)])
-    days = (df["period_end"] - df["period_start"]).dt.days
-    return df[(days >= 340) & (days <= 390)].copy()
+def _is_annual_form(series: pd.Series) -> pd.Series:
+    s = series.fillna("").str.strip().str.upper()
+    annual_upper = {f.upper() for f in ANNUAL_FORMS}
+    return s.isin(annual_upper) | s.str.startswith("10-K") | s.str.startswith("20-F")
 
 
-def _filter_annual_instant(df):
-    df = _prep_dates(df[df["form_type"].isin(ANNUAL_FORMS)])
-    return df[df["period_start"].isna()].copy()
+def _filter_annual_flow(df: pd.DataFrame) -> pd.DataFrame:
+    df = _prep_dates(df)
+    annual_mask = _is_annual_form(df["form_type"])
+    ann = df[annual_mask].copy()
+
+    # Primary: annual form rows with ~365-day duration
+    if not ann.empty and "period_start" in ann.columns:
+        days = (ann["period_end"] - ann["period_start"]).dt.days
+        result = ann[(days >= 310) & (days <= 400)].copy()
+        if not result.empty:
+            return result
+
+    # Fallback: duration-only filter on all rows (form_type may be unreliable)
+    if "period_start" in df.columns and df["period_start"].notna().any():
+        days = (df["period_end"] - df["period_start"]).dt.days
+        result = df[(days >= 310) & (days <= 400)].copy()
+        if not result.empty:
+            return result
+
+    # Last resort: all annual-form rows regardless of duration
+    return ann if not ann.empty else df
 
 
-def _dedup_pivot(df, fact_cols):
+def _filter_annual_instant(df: pd.DataFrame) -> pd.DataFrame:
+    df = _prep_dates(df)
+    annual_mask = _is_annual_form(df["form_type"])
+    ann = df[annual_mask].copy()
+
+    if not ann.empty and "period_start" in ann.columns:
+        # True instant facts have no period_start
+        result = ann[ann["period_start"].isna()].copy()
+        if not result.empty:
+            return result
+        # Fallback: period_start == period_end (point-in-time)
+        same = (ann["period_start"] - ann["period_end"]).dt.days.abs() <= 3
+        result = ann[same].copy()
+        if not result.empty:
+            return result
+
+    return ann if not ann.empty else df
+
+
+def _dedup_pivot(df: pd.DataFrame, fact_cols: list) -> pd.DataFrame:
     df = df.copy()
     df["year_bucket"] = df["period_end"].dt.year
-    df = df.sort_values("filing_date").drop_duplicates(subset=["fact","year_bucket"], keep="last")
+    df = (df.sort_values("filing_date")
+           .drop_duplicates(subset=["fact", "year_bucket"], keep="last"))
     canonical_end = df.groupby("year_bucket")["period_end"].max()
     df["period_end"] = df["year_bucket"].map(canonical_end)
-    pivot = df.pivot(index="period_end", columns="fact", values="numeric_value").sort_index()
+    pivot = df.pivot(index="period_end", columns="fact",
+                     values="numeric_value").sort_index()
     for c in fact_cols:
         if c not in pivot.columns:
             pivot[c] = float("nan")
     return pivot[fact_cols]
 
 
-def _build_from_concepts(df_annual, concepts, ifrs_concepts=None):
+def _build_from_concepts(df_annual: pd.DataFrame,
+                          concepts: dict,
+                          ifrs_concepts: dict | None = None) -> pd.DataFrame:
+    """
+    Build a pivot table from XBRL concept data.
+    Tries both 'namespace:tag' and bare 'tag' forms so it works regardless
+    of whether the namespace prefix was attached during extraction.
+    """
     frames = []
     for metric, candidates in concepts.items():
-        prefixed = [f"us-gaap:{c}" for c in candidates]
+        # Build both prefixed and bare lookup sets
+        prefixed_gaap  = {f"us-gaap:{c}" for c in candidates}
+        bare           = set(candidates)
+        prefixed_ifrs: set = set()
+        bare_ifrs: set = set()
         if ifrs_concepts and metric in ifrs_concepts:
-            prefixed += [f"ifrs-full:{c}" for c in ifrs_concepts[metric]]
-        sub = df_annual[df_annual["concept"].isin(prefixed)].copy()
+            prefixed_ifrs = {f"ifrs-full:{c}" for c in ifrs_concepts[metric]}
+            bare_ifrs     = set(ifrs_concepts[metric])
+        all_names = prefixed_gaap | prefixed_ifrs | bare | bare_ifrs
+        sub = df_annual[df_annual["concept"].isin(all_names)].copy()
         if not sub.empty:
             sub["fact"] = metric
             frames.append(sub)
@@ -224,124 +362,141 @@ def _build_from_concepts(df_annual, concepts, ifrs_concepts=None):
 
 def _facts_to_df(facts) -> pd.DataFrame:
     """
-    Convert an edgartools EntityFacts object to a normalized DataFrame.
-    Handles API differences across edgartools versions (2.x vs 3.x).
-    The returned DataFrame always has these columns:
+    Convert an edgartools EntityFacts object to a normalised flat DataFrame.
+
+    Column contract on return:
         form_type, period_end, period_start, numeric_value,
         accession_no, filing_date, concept, namespace
-    where concept = "namespace:tag".
+
+    where  concept = "namespace:tag"  (e.g. "us-gaap:Revenues")
+
+    The function tries every known edgartools API shape so it works across
+    versions 2.x → 3.x.
     """
     raw = None
 
-    # ── Strategy 1: edgartools 2.x  (facts.to_pandas()) ─────────────────────
-    if hasattr(facts, "to_pandas"):
-        try:
-            raw = facts.to_pandas()
-        except Exception:
-            raw = None
+    # ── Try every known method that returns a flat DataFrame ─────────────────
+    for method_name in ("to_pandas", "to_dataframe"):
+        if hasattr(facts, method_name):
+            try:
+                raw = getattr(facts, method_name)()
+                if not isinstance(raw, pd.DataFrame) or raw.empty:
+                    raw = None
+                else:
+                    break
+            except Exception:
+                raw = None
 
-    # ── Strategy 2: some intermediate versions used to_dataframe() ──────────
-    if raw is None and hasattr(facts, "to_dataframe"):
-        try:
-            raw = facts.to_dataframe()
-        except Exception:
-            raw = None
-
-    # ── Strategy 3: edgartools 3.x stores facts as a dict of DataFrames ─────
-    # facts.facts is typically {namespace: DataFrame} or a single DataFrame
+    # ── Try facts.facts  (dict or DataFrame, edgartools 3.x) ─────────────────
     if raw is None and hasattr(facts, "facts"):
         inner = facts.facts
-        if isinstance(inner, pd.DataFrame):
+        if isinstance(inner, pd.DataFrame) and not inner.empty:
             raw = inner.copy()
         elif isinstance(inner, dict):
             parts = []
-            for ns, df in inner.items():
-                if isinstance(df, pd.DataFrame):
-                    df = df.copy()
-                    df["namespace"] = ns
-                    parts.append(df)
+            for ns, v in inner.items():
+                if isinstance(v, pd.DataFrame) and not v.empty:
+                    v = v.copy()
+                    if "namespace" not in v.columns:
+                        v["namespace"] = ns
+                    parts.append(v)
+                elif isinstance(v, dict):
+                    # Nested dict: {namespace: {concept_name: list_of_dicts}}
+                    for concept_tag, fact_list in v.items():
+                        if isinstance(fact_list, list) and fact_list:
+                            try:
+                                df_c = pd.DataFrame(fact_list)
+                                df_c["namespace"] = ns
+                                df_c["fact"]      = concept_tag
+                                parts.append(df_c)
+                            except Exception:
+                                pass
             if parts:
                 raw = pd.concat(parts, ignore_index=True)
 
-    # ── Strategy 4: iterate the public dict-like interface ───────────────────
+    # ── Iterate per-namespace (last resort) ───────────────────────────────────
     if raw is None:
-        try:
-            parts = []
-            for ns in ("us-gaap", "ifrs-full", "dei"):
-                try:
-                    ns_facts = facts[ns]          # may raise KeyError
-                    if ns_facts is None:
-                        continue
-                    if hasattr(ns_facts, "to_pandas"):
-                        df = ns_facts.to_pandas()
-                    elif hasattr(ns_facts, "to_dataframe"):
-                        df = ns_facts.to_dataframe()
-                    else:
-                        continue
-                    df["namespace"] = ns
-                    parts.append(df)
-                except (KeyError, TypeError):
+        parts = []
+        for ns in ("us-gaap", "ifrs-full", "dei"):
+            try:
+                ns_obj = facts[ns]
+                if ns_obj is None:
                     continue
-            if parts:
-                raw = pd.concat(parts, ignore_index=True)
-        except Exception:
-            raw = None
+                for method_name in ("to_pandas", "to_dataframe"):
+                    if hasattr(ns_obj, method_name):
+                        try:
+                            df_ns = getattr(ns_obj, method_name)()
+                            if isinstance(df_ns, pd.DataFrame) and not df_ns.empty:
+                                df_ns = df_ns.copy()
+                                if "namespace" not in df_ns.columns:
+                                    df_ns["namespace"] = ns
+                                parts.append(df_ns)
+                                break
+                        except Exception:
+                            pass
+            except (KeyError, TypeError):
+                pass
+        if parts:
+            raw = pd.concat(parts, ignore_index=True)
 
     if raw is None or raw.empty:
         raise ValueError(
-            "Could not extract facts from EntityFacts object. "
+            "Cannot extract facts from EntityFacts. "
             "Try: pip install --upgrade edgartools"
         )
 
-    # ── Normalise column names across versions ───────────────────────────────
-    # Different versions use different names; map everything to a canonical set.
-    rename_map = {
-        # edgartools 2.x column names
-        "form":   "form_type",
-        "end":    "period_end",
-        "start":  "period_start",
-        "val":    "numeric_value",
-        "accn":   "accession_no",
-        "filed":  "filing_date",
-        "fact":   "concept",
-        # edgartools 3.x / alternative names
-        "form_type":      "form_type",
-        "period_end":     "period_end",
-        "period_start":   "period_start",
-        "numeric_value":  "numeric_value",
-        "value":          "numeric_value",
-        "accession_no":   "accession_no",
-        "accession":      "accession_no",
-        "filing_date":    "filing_date",
-        "filed_date":     "filing_date",
-        "concept":        "concept",
-        "tag":            "concept",
+    # ── Normalise column names ────────────────────────────────────────────────
+    # Map every known alias → canonical name
+    COL_MAP = {
+        "form":          "form_type",
+        "end":           "period_end",
+        "start":         "period_start",
+        "val":           "numeric_value",
+        "value":         "numeric_value",
+        "accn":          "accession_no",
+        "accession":     "accession_no",
+        "filed":         "filing_date",
+        "filed_date":    "filing_date",
+        "fact":          "concept",
+        "tag":           "concept",
     }
-    raw = raw.rename(columns={k: v for k, v in rename_map.items() if k in raw.columns})
+    raw = raw.rename(columns={k: v for k, v in COL_MAP.items()
+                               if k in raw.columns and k != v})
 
-    # Ensure namespace column exists
+    # Ensure namespace column
     if "namespace" not in raw.columns:
-        # Try to split concept if it contains ":"
-        if "concept" in raw.columns and raw["concept"].str.contains(":").any():
-            raw[["namespace", "concept"]] = raw["concept"].str.split(":", n=1, expand=True)
+        if "concept" in raw.columns:
+            has_colon = raw["concept"].astype(str).str.contains(":", na=False)
+            if has_colon.any():
+                raw["namespace"] = (raw["concept"].astype(str)
+                                    .str.split(":", n=1).str[0]
+                                    .fillna("us-gaap"))
+            else:
+                raw["namespace"] = "us-gaap"
         else:
             raw["namespace"] = "us-gaap"
 
-    # Build full concept string "namespace:tag" if not already there
-    if "concept" in raw.columns and not raw["concept"].str.contains(":").all():
-        raw["concept"] = raw["namespace"] + ":" + raw["concept"]
+    # Attach "namespace:" prefix to bare concept names
+    if "concept" in raw.columns:
+        raw["concept"] = raw["concept"].astype(str).fillna("")
+        no_prefix = ~raw["concept"].str.contains(":", na=False)
+        if no_prefix.any():
+            ns_series = raw.loc[no_prefix, "namespace"].fillna("us-gaap").astype(str)
+            raw.loc[no_prefix, "concept"] = ns_series + ":" + raw.loc[no_prefix, "concept"]
 
-    # Ensure required columns exist with sensible defaults
+    # Ensure all required columns exist
     for col, default in [
-        ("period_start", pd.NaT),
-        ("accession_no", ""),
-        ("filing_date",  pd.NaT),
-        ("form_type",    ""),
+        ("period_start",  pd.NaT),
+        ("accession_no",  ""),
+        ("filing_date",   pd.NaT),
+        ("form_type",     ""),
+        ("numeric_value", np.nan),
     ]:
         if col not in raw.columns:
             raw[col] = default
 
     return raw
+
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -357,13 +512,28 @@ def fetch_edgar(ticker: str, email: str):
 
     raw = _facts_to_df(facts)
 
+    # ── Debug: stash raw info in cache for the UI to show ────────────────────
+    _debug = {
+        "rows":       len(raw),
+        "cols":       list(raw.columns),
+        "form_types": sorted(raw["form_type"].dropna().unique().tolist())[:30],
+        "concept_sample": raw["concept"].dropna().head(10).tolist(),
+    }
+
     flow_raw    = _filter_annual_flow(raw)
     instant_raw = _filter_annual_instant(raw)
 
     # ── Income statement ──────────────────────────────────────────────────────
     income_df = _build_from_concepts(flow_raw, INC_CONCEPTS, INC_CONCEPTS_IFRS)
     if income_df.empty:
-        raise ValueError("No income data found")
+        raise ValueError(
+            f"No income data found.\n\n"
+            f"DEBUG — raw rows: {_debug['rows']} | "
+            f"columns: {_debug['cols']} | "
+            f"form_types present: {_debug['form_types']} | "
+            f"flow_raw rows after filter: {len(flow_raw)} | "
+            f"sample concepts: {_debug['concept_sample']}"
+        )
 
     if "DilutedShares" in income_df.columns:
         sh = income_df["DilutedShares"].dropna()
@@ -862,7 +1032,21 @@ with st.spinner(f"Fetching EDGAR data for **{ticker}** …"):
         income_df, bs_df, cf_df, quarterly_df, raw = fetch_edgar(ticker, email)
     except Exception as err:
         st.error(f"EDGAR fetch failed: {err}")
+        with st.expander("🔍 Raw debug info (paste this if asking for help)"):
+            st.code(str(err), language="text")
         st.stop()
+
+# Debug expander — always shown so you can verify raw data shape
+with st.expander("🛠 Raw EDGAR data shape (click to expand)", expanded=False):
+    if not raw.empty:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total rows", f"{len(raw):,}")
+        c2.metric("Columns", len(raw.columns))
+        c3.metric("Annual flow rows", f"{len(_filter_annual_flow(raw)):,}")
+        st.write("**Columns:**", list(raw.columns))
+        form_counts = raw["form_type"].value_counts().head(20)
+        st.write("**Form types (top 20):**", form_counts.to_dict())
+        st.write("**Sample concepts (first 10):**", raw["concept"].dropna().head(10).tolist())
 
 with st.spinner("Fetching price data …"):
     price_hist, yf_info = fetch_price_data(ticker)
