@@ -750,60 +750,6 @@ def compute_ttm(income_df, bs_df, cf_df):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Consistency / record-count logic (ConsistencyScore)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def consistency_stats(series: pd.Series):
-    """Given a per-share annual series, return (rec_count, inc_count, obs_count)."""
-    vals = series.dropna().values
-    n = len(vals)
-    if n < 2:
-        return 0, 0, n
-    rec = 0
-    max_v = None
-    inc = 0
-    prev_v = None
-    for v in vals:
-        if max_v is None or v > max_v:
-            rec += 1; max_v = v
-        if prev_v is not None and v > prev_v:
-            inc += 1
-        prev_v = v
-    return rec, inc, n
-
-
-def build_consistency_table(income_df, bs_df, cf_df):
-    """Return DataFrame with #Rec / #Inc for key per-share metrics."""
-    rows = []
-    if income_df.empty:
-        return pd.DataFrame()
-
-    sh = income_df["DilutedShares"].replace(0, np.nan)
-
-    metrics = [
-        ("Revenue/Share",  income_df["Revenue"]       / sh),
-        ("EPS (NI/Share)", income_df["NetIncome"]      / sh),
-        ("GP/Share",       income_df.get("GrossProfit", pd.Series(dtype=float)) / sh),
-        ("EBITDA/Share",   income_df.get("EBITDA",      pd.Series(dtype=float)) / sh),
-    ]
-    if not cf_df.empty and "FreeCashFlow" in cf_df.columns:
-        cf_aligned = cf_df.set_index("period_end")["FreeCashFlow"].reindex(
-            income_df["period_end"].values)
-        metrics.append(("FCF/Share", cf_aligned.values / sh.values))
-
-    for label, series in metrics:
-        if isinstance(series, np.ndarray):
-            series = pd.Series(series).dropna()
-        else:
-            series = series.dropna()
-        rec, inc, obs = consistency_stats(series)
-        rows.append({"Metric": label, "#Obs": obs, "#Rec (New High)": rec, "#Inc (QoQ Up)": inc,
-                     "Rec%": f"{rec/obs*100:.0f}%" if obs else "—",
-                     "Inc%": f"{inc/obs*100:.0f}%" if obs else "—"})
-    return pd.DataFrame(rows)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Valuation ratios
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -999,6 +945,10 @@ email_input  = st.sidebar.text_input(
 fetch_btn = st.sidebar.button("🔍 Fetch Data", type="primary", use_container_width=True)
 
 st.sidebar.markdown("---")
+st.sidebar.markdown("**Display window**")
+n_annual   = st.sidebar.slider("Annual years to show",   min_value=3,  max_value=99, value=99, step=1)
+n_quarters = st.sidebar.slider("Quarters to show",       min_value=4,  max_value=99, value=99, step=1)
+st.sidebar.markdown("---")
 st.sidebar.markdown("""
 **About**
 - All financial data pulled live from **SEC EDGAR** via `edgartools`
@@ -1011,7 +961,6 @@ st.sidebar.markdown("""
 - 🏦 Balance Sheet
 - 💵 Cash Flow
 - 📅 Quarterly Breakdown
-- 🔄 Consistency Score
 - 📊 CAGR Tables
 """)
 
@@ -1071,7 +1020,6 @@ price    = _safe(yf_info.get("currentPrice") or yf_info.get("regularMarketPrice"
 mkt_cap  = _safe(yf_info.get("marketCap"))
 val      = compute_valuation(ttm, price, mkt_cap)
 ev       = val.pop("_ev", None)
-cons_df  = build_consistency_table(income_df, bs_df, cf_df)
 cagr_df  = build_cagr_table(income_df, cf_df)
 
 company_name = yf_info.get("longName") or yf_info.get("shortName") or ticker
@@ -1117,7 +1065,6 @@ tabs = st.tabs([
     "🏦 Balance Sheet",
     "💵 Cash Flow",
     "📅 Quarterly",
-    "🔄 Consistency",
     "📊 CAGRs",
     "🗂 Raw XBRL",
 ])
@@ -1167,7 +1114,7 @@ with tabs[0]:
     # Revenue/EPS growth trend (last 5 years)
     if len(income_df) >= 2:
         st.markdown('<div class="section-header">Revenue & Net Income Growth (Annual)</div>', unsafe_allow_html=True)
-        df_plot = income_df.tail(10).copy()
+        df_plot = income_df.tail(n_annual).copy()
         df_plot["period_end_str"] = df_plot["period_end"].astype(str).str[:4]
         fig_g = line_chart(
             df_plot, "period_end_str",
@@ -1186,13 +1133,13 @@ with tabs[1]:
         df_i["Year"] = df_i["period_end"].astype(str).str[:4]
 
         st.markdown('<div class="section-header">Revenue, Gross Profit, Operating Income, Net Income</div>', unsafe_allow_html=True)
-        fig_inc = bar_chart(df_i.tail(12), "Year",
+        fig_inc = bar_chart(df_i.tail(n_annual), "Year",
                             ["Revenue","GrossProfit","OperatingIncome","NetIncome"],
                             "Income Statement ($B)")
         st.plotly_chart(fig_inc, use_container_width=True)
 
         st.markdown('<div class="section-header">Margins</div>', unsafe_allow_html=True)
-        fig_mg = line_chart(df_i.tail(12), "Year",
+        fig_mg = line_chart(df_i.tail(n_annual), "Year",
                             ["GrossMargin","OperatingMargin","EBITDAMargin"],
                             "Margins %")
         st.plotly_chart(fig_mg, use_container_width=True)
@@ -1210,7 +1157,7 @@ with tabs[1]:
             "RevenueGrowth": "{:.1f}%", "NetIncomeGrowth": "{:.1f}%",
             "DilutedShares": "{:,.0f}", "EPSDiluted": "${:.2f}",
         }
-        tbl = df_i[display_cols].sort_values("Year", ascending=False)
+        tbl = df_i[display_cols].sort_values("Year", ascending=False).head(n_annual)
         st.dataframe(tbl, hide_index=True, use_container_width=True)
 
 
@@ -1223,13 +1170,13 @@ with tabs[2]:
         df_b["Year"] = df_b["period_end"].astype(str).str[:4]
 
         st.markdown('<div class="section-header">Assets vs Liabilities vs Equity</div>', unsafe_allow_html=True)
-        fig_bs = bar_chart(df_b.tail(10), "Year",
+        fig_bs = bar_chart(df_b.tail(n_annual), "Year",
                            ["TotalAssets","TotalLiabilities","StockholdersEquity"],
                            "Balance Sheet ($B)")
         st.plotly_chart(fig_bs, use_container_width=True)
 
         st.markdown('<div class="section-header">Debt & Cash</div>', unsafe_allow_html=True)
-        fig_dc = bar_chart(df_b.tail(10), "Year",
+        fig_dc = bar_chart(df_b.tail(n_annual), "Year",
                            ["TotalDebt","Cash","NetDebt"],
                            "Debt vs Cash ($B)")
         st.plotly_chart(fig_dc, use_container_width=True)
@@ -1237,7 +1184,7 @@ with tabs[2]:
         disp = ["Year","Cash","CurrentAssets","TotalAssets","CurrentLiabilities",
                 "LongTermDebt","TotalDebt","NetDebt","StockholdersEquity","TotalLiabilities"]
         disp = [c for c in disp if c in df_b.columns]
-        st.dataframe(df_b[disp].sort_values("Year", ascending=False), hide_index=True, use_container_width=True)
+        st.dataframe(df_b[disp].sort_values("Year", ascending=False).head(n_annual), hide_index=True, use_container_width=True)
 
 
 # ── Tab 3: Cash Flow ──────────────────────────────────────────────────────────
@@ -1249,7 +1196,7 @@ with tabs[3]:
         df_c["Year"] = df_c["period_end"].astype(str).str[:4]
 
         st.markdown('<div class="section-header">Operating CF, CapEx, Free Cash Flow</div>', unsafe_allow_html=True)
-        fig_cf = bar_chart(df_c.tail(12), "Year",
+        fig_cf = bar_chart(df_c.tail(n_annual), "Year",
                            ["OperatingCF","CapEx","FreeCashFlow"],
                            "Cash Flow ($B)")
         st.plotly_chart(fig_cf, use_container_width=True)
@@ -1263,14 +1210,14 @@ with tabs[3]:
             )
             if not df_cmp.empty:
                 st.markdown('<div class="section-header">FCF vs Net Income (Sloan Signal)</div>', unsafe_allow_html=True)
-                fig_sloan = bar_chart(df_cmp.tail(12), "Year",
+                fig_sloan = bar_chart(df_cmp.tail(n_annual), "Year",
                                       ["FreeCashFlow","NetIncome"],
                                       "FCF vs Net Income — divergence = accrual signal ($B)")
                 st.plotly_chart(fig_sloan, use_container_width=True)
 
         disp = ["Year","OperatingCF","InvestingCF","FinancingCF","CapEx","FreeCashFlow"]
         disp = [c for c in disp if c in df_c.columns]
-        st.dataframe(df_c[disp].sort_values("Year", ascending=False), hide_index=True, use_container_width=True)
+        st.dataframe(df_c[disp].sort_values("Year", ascending=False).head(n_annual), hide_index=True, use_container_width=True)
 
 
 # ── Tab 4: Quarterly Breakdown ────────────────────────────────────────────────
@@ -1280,127 +1227,75 @@ with tabs[4]:
     else:
         q = quarterly_df.copy()
 
-        st.markdown('<div class="section-header">Quarterly Revenue & Net Income</div>', unsafe_allow_html=True)
-        fig_qrev = bar_chart(q.tail(20), "period_label",
-                             ["Revenue","NetIncome"],
-                             "Quarterly Revenue & Net Income ($B)")
-        st.plotly_chart(fig_qrev, use_container_width=True)
+        # ── Revenue + Gross Profit ───────────────────────────────────────────
+        st.markdown('<div class="section-header">Revenue & Gross Profit</div>', unsafe_allow_html=True)
+        rev_cols = [c for c in ["Revenue","GrossProfit"] if c in q.columns]
+        if rev_cols:
+            fig_qrev = bar_chart(q.tail(n_quarters), "period_label", rev_cols,
+                                 "Quarterly Revenue & Gross Profit ($B)")
+            st.plotly_chart(fig_qrev, use_container_width=True)
 
-        st.markdown('<div class="section-header">Quarterly Margins</div>', unsafe_allow_html=True)
+        # ── Operating & Net Income ───────────────────────────────────────────
+        inc_cols = [c for c in ["OperatingIncome","NetIncome"] if c in q.columns]
+        if inc_cols:
+            fig_qni = bar_chart(q.tail(n_quarters), "period_label", inc_cols,
+                                "Quarterly Operating & Net Income ($B)")
+            st.plotly_chart(fig_qni, use_container_width=True)
+
+        # ── YoY Revenue growth (same quarter prior year) ─────────────────────
+        if "Revenue" in q.columns:
+            st.markdown('<div class="section-header">Revenue YoY Growth (same quarter)</div>', unsafe_allow_html=True)
+            q_sorted = q.sort_values(["quarter","fy"]).copy()
+            q_sorted["RevYoY"] = q_sorted.groupby("quarter")["Revenue"].pct_change() * 100
+            q_sorted = q_sorted.sort_values(["fy","quarter"])
+            fig_yoy = go.Figure()
+            yoy_tail = q_sorted.tail(n_quarters)
+            colors_yoy = ["#6BCB77" if v >= 0 else "#FF6B6B"
+                          for v in yoy_tail["RevYoY"].fillna(0)]
+            fig_yoy.add_trace(go.Bar(
+                x=yoy_tail["period_label"], y=yoy_tail["RevYoY"],
+                marker_color=colors_yoy, name="Rev YoY %",
+            ))
+            fig_yoy.update_layout(
+                title="Revenue YoY Growth %",
+                plot_bgcolor="#1e2433", paper_bgcolor="#1e2433",
+                font=dict(color="#c9d1d9", size=12),
+                xaxis=dict(gridcolor="#2e3550", tickangle=-30),
+                yaxis=dict(gridcolor="#2e3550", title="YoY %"),
+                height=350, margin=dict(t=50, b=60),
+            )
+            st.plotly_chart(fig_yoy, use_container_width=True)
+
+        # ── Margins ─────────────────────────────────────────────────────────
         mg_cols = [c for c in ["GrossMargin","OperatingMargin","EBITDAMargin"] if c in q.columns]
         if mg_cols:
-            fig_qmg = line_chart(q.tail(20), "period_label", mg_cols, "Quarterly Margins %")
+            st.markdown('<div class="section-header">Quarterly Margins</div>', unsafe_allow_html=True)
+            fig_qmg = line_chart(q.tail(n_quarters), "period_label", mg_cols, "Quarterly Margins %")
             st.plotly_chart(fig_qmg, use_container_width=True)
 
-        st.markdown('<div class="section-header">Quarterly Cash Flow</div>', unsafe_allow_html=True)
+        # ── Cash Flow ────────────────────────────────────────────────────────
         cf_cols = [c for c in ["OperatingCF","FreeCashFlow","CapEx"] if c in q.columns]
         if cf_cols:
-            fig_qcf = bar_chart(q.tail(20), "period_label", cf_cols, "Quarterly Cash Flow ($B)")
+            st.markdown('<div class="section-header">Quarterly Cash Flow</div>', unsafe_allow_html=True)
+            fig_qcf = bar_chart(q.tail(n_quarters), "period_label", cf_cols,
+                                "Quarterly Cash Flow ($B)")
             st.plotly_chart(fig_qcf, use_container_width=True)
 
-        display_q = [c for c in ["period_label","Revenue","GrossProfit","GrossMargin",
-                                  "OperatingIncome","OperatingMargin","EBITDA","EBITDAMargin",
-                                  "NetIncome","EPSDiluted","OperatingCF","CapEx","FreeCashFlow"] if c in q.columns]
-        st.dataframe(q[display_q].sort_values("period_label", ascending=False), hide_index=True, use_container_width=True)
-
-
-# ── Tab 5: Consistency Score ──────────────────────────────────────────────────
-with tabs[5]:
-    st.markdown("""
-    **ConsistencyScore** counts two things per metric across the annual per-share series:
-
-    - **#Rec (New High)** — how many times the series reached an all-time high
-    - **#Inc (Year-over-Year Up)** — how many year-over-year increases occurred
-
-    High #Rec + high #Inc = consistent compounder.
-    """)
-
-    if not cons_df.empty:
-        st.dataframe(cons_df, hide_index=True, use_container_width=True)
-
-        total_rec = cons_df["#Rec (New High)"].sum()
-        total_inc = cons_df["#Inc (QoQ Up)"].sum()
-        score     = total_rec + total_inc
-
-        c1, c2, c3 = st.columns(3)
-        with c1: mc("Sum #Rec", str(total_rec))
-        with c2: mc("Sum #Inc", str(total_inc))
-        with c3: mc("ConsistencyScore", str(score))
-
-        # Bar chart of #Rec vs #Inc
-        fig_con = go.Figure()
-        fig_con.add_trace(go.Bar(
-            x=cons_df["Metric"], y=cons_df["#Rec (New High)"],
-            name="#Rec (New Highs)", marker_color="#00A0A0",
-        ))
-        fig_con.add_trace(go.Bar(
-            x=cons_df["Metric"], y=cons_df["#Inc (QoQ Up)"],
-            name="#Inc (YoY Up)", marker_color="#FFA500",
-        ))
-        fig_con.update_layout(
-            barmode="group", title="Consistency: Record Highs vs YoY Increases",
-            plot_bgcolor="#1e2433", paper_bgcolor="#1e2433",
-            font=dict(color="#c9d1d9"), height=360,
-            xaxis=dict(gridcolor="#2e3550"),
-            yaxis=dict(gridcolor="#2e3550", title="Count"),
-            margin=dict(t=50, b=40),
+        # ── Data table ──────────────────────────────────────────────────────
+        st.markdown('<div class="section-header">Quarterly Data Table</div>', unsafe_allow_html=True)
+        display_q = [c for c in [
+            "period_label","Revenue","GrossProfit","GrossMargin",
+            "OperatingIncome","OperatingMargin","EBITDA","EBITDAMargin",
+            "NetIncome","OperatingCF","CapEx","FreeCashFlow",
+        ] if c in q.columns]
+        st.dataframe(
+            q[display_q].sort_values("period_label", ascending=False).head(n_quarters),
+            hide_index=True, use_container_width=True,
         )
-        st.plotly_chart(fig_con, use_container_width=True)
-
-        # Per-share time series for any selected metric
-        st.markdown('<div class="section-header">Per-Share Series Explorer</div>', unsafe_allow_html=True)
-        sh = income_df["DilutedShares"].replace(0, np.nan)
-
-        def _get_series(label):
-            if "Revenue" in label:
-                return (income_df["Revenue"] / sh).values, income_df["period_end"].astype(str).str[:4].values
-            if "EPS" in label:
-                return (income_df["NetIncome"] / sh).values, income_df["period_end"].astype(str).str[:4].values
-            if "GP" in label:
-                return (income_df.get("GrossProfit", pd.Series(0, index=income_df.index)) / sh).values, income_df["period_end"].astype(str).str[:4].values
-            if "EBITDA" in label:
-                return (income_df.get("EBITDA", pd.Series(0, index=income_df.index)) / sh).values, income_df["period_end"].astype(str).str[:4].values
-            if "FCF" in label and not cf_df.empty:
-                cf_a = cf_df.set_index("period_end")["FreeCashFlow"].reindex(income_df["period_end"].values)
-                return (cf_a.values / sh.values), income_df["period_end"].astype(str).str[:4].values
-            return None, None
-
-        metric_choice = st.selectbox("Select metric", cons_df["Metric"].tolist())
-        vals, dates = _get_series(metric_choice)
-        if vals is not None and dates is not None:
-            s = pd.Series(vals, index=dates, dtype=float).dropna()
-            # Highlight record highs
-            rec_mask = np.zeros(len(s), dtype=bool)
-            max_so_far = -np.inf
-            for i_r, v in enumerate(s.values):
-                if v > max_so_far:
-                    rec_mask[i_r] = True; max_so_far = v
-
-            fig_ps = go.Figure()
-            fig_ps.add_trace(go.Scatter(
-                x=s.index, y=s.values,
-                mode="lines+markers", name=metric_choice,
-                line=dict(color="#00A0A0", width=2),
-            ))
-            rec_dates = s.index[rec_mask]; rec_vals = s.values[rec_mask]
-            fig_ps.add_trace(go.Scatter(
-                x=rec_dates, y=rec_vals,
-                mode="markers", name="New High",
-                marker=dict(color="#FFD166", size=10, symbol="star"),
-            ))
-            fig_ps.update_layout(
-                title=f"{metric_choice} — Annual Per Share",
-                plot_bgcolor="#1e2433", paper_bgcolor="#1e2433",
-                font=dict(color="#c9d1d9"), height=360,
-                xaxis=dict(gridcolor="#2e3550"),
-                yaxis=dict(gridcolor="#2e3550"),
-                margin=dict(t=50, b=40),
-            )
-            st.plotly_chart(fig_ps, use_container_width=True)
 
 
-# ── Tab 6: CAGR Tables ────────────────────────────────────────────────────────
-with tabs[6]:
+# ── Tab 5: CAGR Tables ───────────────────────────────────────────────────────
+with tabs[5]:
     st.markdown("CAGR calculated from the most recent annual value back N years, on a **per-share** basis.")
 
     if not cagr_df.empty:
@@ -1430,11 +1325,11 @@ with tabs[6]:
             st.caption(f"Heatmap skipped: {e}")
 
 
-# ── Tab 7: Raw XBRL ───────────────────────────────────────────────────────────
-with tabs[7]:
+# ── Tab 6: Raw XBRL ───────────────────────────────────────────────────────────
+with tabs[6]:
     st.markdown("Raw annual XBRL facts from SEC EDGAR, split into flow (income/CF) and instant (balance sheet).")
 
-    raw_sub = tabs[7]
+    raw_sub = tabs[6]
 
     col_flow, col_inst = st.columns(2)
 
