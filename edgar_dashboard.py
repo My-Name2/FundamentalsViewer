@@ -702,7 +702,6 @@ st.sidebar.markdown("""
 **About**
 - All financial data pulled live from **SEC EDGAR** via `edgartools`
 - Price / market cap from **yfinance**
-- No Macrotrends dependency
 
 **Sections**
 - 📌 Overview & Valuation
