@@ -259,9 +259,16 @@ BS_CONCEPTS_IFRS = {
 
 def _prep_dates(df):
     df = df.copy()
+    # Guard against duplicate column names (can arrive from multi-source concat)
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated(keep="first")]
     for c in ("period_start", "period_end", "filing_date"):
         if c in df.columns:
-            df[c] = pd.to_datetime(df[c], errors="coerce")
+            col = df[c]
+            # If duplicate columns survived, col is a DataFrame — take first column
+            if isinstance(col, pd.DataFrame):
+                col = col.iloc[:, 0]
+            df[c] = pd.to_datetime(col, errors="coerce")
     return df
 
 
@@ -444,6 +451,13 @@ def _facts_to_df(facts) -> pd.DataFrame:
             "Cannot extract facts from EntityFacts. "
             "Try: pip install --upgrade edgartools"
         )
+
+    # ── Drop duplicate column names produced by pd.concat across sources ──────
+    # When multiple parts are concatenated, the same column can appear twice
+    # (e.g. two "namespace" columns). Downstream .str / arithmetic ops then
+    # receive a 2-D DataFrame instead of a Series and crash.
+    if raw.columns.duplicated().any():
+        raw = raw.loc[:, ~raw.columns.duplicated(keep="first")]
 
     # ── Normalise column names ────────────────────────────────────────────────
     # Map every known alias → canonical name
