@@ -1424,80 +1424,185 @@ with tabs[4]:
 
 # ── Tab 5: Valuation History ──────────────────────────────────────────────────
 with tabs[5]:
+    # ── Build ratio series: prefer rolling TTM (daily), fall back to annual ───
+    # Annual: for each trading day, forward-fill the most recent annual filing.
+    # This produces a step-function that updates once per year — perfectly valid
+    # for value investing purposes.  TTM is an upgrade when quarterly data loads.
+
     RATIO_META = {
-        "PE_TTM":    ("P/E",        (0, 80)),
-        "PFCF_TTM":  ("P/FCF",      (0, 80)),
-        "PS_TTM":    ("P/Sales",    (0, 30)),
-        "POCF_TTM":  ("P/OCF",      (0, 60)),
-        "PBook_TTM": ("P/Book",     (0, 30)),
-        "EV_EBITDA": ("EV/EBITDA",  (0, 60)),
-        "EV_Sales":  ("EV/Sales",   (0, 30)),
-        "EV_FCF":    ("EV/FCF",     (0, 80)),
+        # col_ttm          col_annual_num   col_annual_den  label        y_cap
+        "PE":    ("NetIncome",    "DilutedShares", "P/E",       80),
+        "PFCF":  ("FreeCashFlow", "DilutedShares", "P/FCF",     80),
+        "PS":    ("Revenue",      "DilutedShares", "P/Sales",   30),
+        "POCF":  ("OperatingCF",  "DilutedShares", "P/OCF",     60),
+        "PBook": ("StockholdersEquity", "DilutedShares", "P/Book", 30),
+    }
+    EV_META = {
+        "EV_EBITDA": ("EBITDA",        "EV/EBITDA", 60),
+        "EV_Sales":  ("Revenue",        "EV/Sales",  30),
+        "EV_FCF":    ("FreeCashFlow",   "EV/FCF",    80),
     }
 
-    if rolling_ttm.empty:
-        st.warning("Rolling TTM not available — need quarterly data from EDGAR.")
-    else:
-        available_ratios = {k: v for k, v in RATIO_META.items() if k in rolling_ttm.columns}
-        if not available_ratios:
-            st.warning("No ratio columns computed.")
+    def _build_ratio_series(num_col, den_col_or_none, is_ev=False):
+        """
+        Construct a daily ratio series.
+        Priority: rolling_ttm columns → annual merge_asof fallback.
+        For price-based ratios: ratio = price / (metric_per_share).
+        For EV ratios: ratio = (mktcap + debt - cash) / metric.
+        den_col_or_none: "DilutedShares" for P/* ratios, None for EV ratios.
+        """
+        # ── Try rolling TTM first ─────────────────────────────────────────────
+        ttm_col = ("EV_" + num_col if is_ev
+                   else "P" + num_col.replace("NetIncome","E")
+                                     .replace("FreeCashFlow","FCF")
+                                     .replace("Revenue","S")
+                                     .replace("OperatingCF","OCF")
+                                     .replace("StockholdersEquity","Book") + "_TTM")
+        if not rolling_ttm.empty and ttm_col in rolling_ttm.columns:
+            s = rolling_ttm[ttm_col].dropna()
+            if not s.empty:
+                return s, "TTM (daily)"
+
+        # ── Annual fallback ───────────────────────────────────────────────────
+        if price_hist.empty:
+            return pd.Series(dtype=float), ""
+
+        # Gather the annual fundamental
+        if num_col in ["FreeCashFlow","OperatingCF","CapEx"]:
+            src_df = cf_df
+        elif num_col in ["StockholdersEquity","TotalDebt","Cash","TotalAssets"]:
+            src_df = bs_df
         else:
-            selected_ratios = st.multiselect(
-                "Ratios to display",
-                options=list(available_ratios.keys()),
-                default=list(available_ratios.keys())[:4],
-                format_func=lambda k: available_ratios[k][0],
-            )
-            show_bands = st.checkbox("Show 25/75 percentile band", value=True)
+            src_df = income_df
 
-            for col in selected_ratios:
-                label, (ymin, ymax) = available_ratios[col]
-                s = rolling_ttm[col].dropna()
-                # clip extreme outliers (ratio > 5× 95th pct)
-                p95 = s.quantile(0.95)
-                s = s.clip(upper=min(ymax * 3, p95 * 5))
-                s = s[s > 0]
-                if s.empty:
-                    continue
+        if src_df.empty or num_col not in src_df.columns:
+            return pd.Series(dtype=float), ""
 
-                med  = s.median()
-                p25  = s.quantile(0.25)
-                p75  = s.quantile(0.75)
+        fund = src_df[["period_end", num_col]].copy()
+        if den_col_or_none and den_col_or_none in src_df.columns:
+            fund["_den"] = src_df[den_col_or_none]
+        elif den_col_or_none and den_col_or_none in income_df.columns:
+            fund = fund.merge(income_df[["period_end", den_col_or_none]],
+                              on="period_end", how="left")
+            fund.rename(columns={den_col_or_none: "_den"}, inplace=True)
 
-                fig_r = go.Figure()
-                if show_bands:
-                    fig_r.add_hrect(y0=p25, y1=p75,
-                                    fillcolor="rgba(0,160,160,0.08)",
-                                    line_width=0, annotation_text="25–75%",
-                                    annotation_position="top left",
-                                    annotation_font_color="#888")
-                    fig_r.add_hline(y=med, line_dash="dash",
-                                    line_color="#FFA500",
-                                    annotation_text=f"Median {med:.1f}x",
-                                    annotation_position="top right",
-                                    annotation_font_color="#FFA500")
-                fig_r.add_trace(go.Scatter(
-                    x=s.index, y=s.values, mode="lines", name=label,
-                    line=dict(color="#00A0A0", width=1.5),
-                ))
-                fig_r.update_layout(
-                    title=f"{label} — Rolling TTM",
-                    plot_bgcolor="#1e2433", paper_bgcolor="#1e2433",
-                    font=dict(color="#c9d1d9", size=12),
-                    xaxis=dict(gridcolor="#2e3550"),
-                    yaxis=dict(gridcolor="#2e3550", title=f"{label}",
-                               range=[0, min(ymax, s.quantile(0.98) * 1.2)]),
-                    height=300, margin=dict(t=50, b=30, l=50, r=20),
-                    showlegend=False,
-                )
-                st.plotly_chart(fig_r, use_container_width=True)
+        fund["period_end"] = pd.to_datetime(fund["period_end"])
+        fund = fund.sort_values("period_end").drop_duplicates("period_end")
 
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric(f"{label} Current", f"{s.iloc[-1]:.1f}x" if len(s) else "—")
-                c2.metric("Median", f"{med:.1f}x")
-                c3.metric("25th pct", f"{p25:.1f}x")
-                c4.metric("75th pct", f"{p75:.1f}x")
-                st.markdown("---")
+        price_d = price_hist[["Close"]].copy()
+        price_d.index = pd.to_datetime(price_d.index)
+        price_d.index.name = "date"
+        price_d = price_d.reset_index().sort_values("date")
+
+        merged_a = pd.merge_asof(price_d, fund.rename(columns={"period_end":"date"}),
+                                  on="date", direction="backward")
+        if merged_a.empty:
+            return pd.Series(dtype=float), ""
+
+        price_s = merged_a["Close"]
+        num_s   = merged_a[num_col].replace(0, np.nan)
+
+        if is_ev:
+            # need debt/cash from bs_df forward-filled the same way
+            td_s   = pd.Series(0.0, index=merged_a.index)
+            cash_s = pd.Series(0.0, index=merged_a.index)
+            for bc, dest in [("TotalDebt", td_s), ("Cash", cash_s)]:
+                if not bs_df.empty and bc in bs_df.columns:
+                    bf = bs_df[["period_end", bc]].copy()
+                    bf["period_end"] = pd.to_datetime(bf["period_end"])
+                    bf = bf.sort_values("period_end").drop_duplicates("period_end")
+                    tmp = pd.merge_asof(price_d[["date"]], bf.rename(columns={"period_end":"date"}),
+                                        on="date", direction="backward")
+                    if bc == "TotalDebt":
+                        td_s   = tmp[bc].fillna(0)
+                    else:
+                        cash_s = tmp[bc].fillna(0)
+            sh_s = merged_a.get("_den", pd.Series(dtype=float)).replace(0, np.nan)
+            if "_den" not in merged_a.columns and not income_df.empty and "DilutedShares" in income_df.columns:
+                sh_f = income_df[["period_end","DilutedShares"]].copy()
+                sh_f["period_end"] = pd.to_datetime(sh_f["period_end"])
+                sh_f = sh_f.sort_values("period_end").drop_duplicates("period_end")
+                tmp2 = pd.merge_asof(price_d[["date"]], sh_f.rename(columns={"period_end":"date"}),
+                                     on="date", direction="backward")
+                sh_s = tmp2["DilutedShares"].replace(0, np.nan)
+            ev_s = price_s * sh_s + td_s.values - cash_s.values
+            ratio = (ev_s / num_s).where(num_s > 0)
+        else:
+            if "_den" not in merged_a.columns:
+                return pd.Series(dtype=float), ""
+            den_s = merged_a["_den"].replace(0, np.nan)
+            metric_per_share = num_s / den_s
+            ratio = (price_s / metric_per_share).where(metric_per_share > 0)
+
+        ratio.index = pd.to_datetime(merged_a["date"])
+        return ratio.dropna(), "Annual (step)"
+
+    # ── UI ────────────────────────────────────────────────────────────────────
+    all_ratio_keys = list(RATIO_META.keys()) + list(EV_META.keys())
+    ratio_labels   = {k: RATIO_META[k][2] if k in RATIO_META else EV_META[k][1]
+                      for k in all_ratio_keys}
+    selected_ratios = st.multiselect(
+        "Ratios to display",
+        options=all_ratio_keys,
+        default=all_ratio_keys[:4],
+        format_func=lambda k: ratio_labels[k],
+    )
+    show_bands = st.checkbox("Show 25/75 percentile band", value=True)
+
+    for key in selected_ratios:
+        if key in RATIO_META:
+            num_col, den_col, label, y_cap = RATIO_META[key]
+            s, source = _build_ratio_series(num_col, den_col, is_ev=False)
+        else:
+            num_col, label, y_cap = EV_META[key]
+            s, source = _build_ratio_series(num_col, None, is_ev=True)
+
+        if s.empty:
+            st.caption(f"{label}: no data")
+            continue
+
+        p95 = s.quantile(0.95)
+        s   = s.clip(upper=min(y_cap * 3, p95 * 5))
+        s   = s[s > 0]
+        if s.empty:
+            continue
+
+        med = s.median()
+        p25 = s.quantile(0.25)
+        p75 = s.quantile(0.75)
+
+        fig_r = go.Figure()
+        if show_bands:
+            fig_r.add_hrect(y0=p25, y1=p75,
+                            fillcolor="rgba(0,160,160,0.08)", line_width=0,
+                            annotation_text="25–75%", annotation_position="top left",
+                            annotation_font_color="#888")
+            fig_r.add_hline(y=med, line_dash="dash", line_color="#FFA500",
+                            annotation_text=f"Median {med:.1f}x",
+                            annotation_position="top right",
+                            annotation_font_color="#FFA500")
+        fig_r.add_trace(go.Scatter(
+            x=s.index, y=s.values, mode="lines", name=label,
+            line=dict(color="#00A0A0", width=1.5),
+        ))
+        fig_r.update_layout(
+            title=f"{label} ({source})",
+            plot_bgcolor="#1e2433", paper_bgcolor="#1e2433",
+            font=dict(color="#c9d1d9", size=12),
+            xaxis=dict(gridcolor="#2e3550"),
+            yaxis=dict(gridcolor="#2e3550", title=label,
+                       range=[0, min(y_cap, s.quantile(0.98) * 1.2)]),
+            height=300, margin=dict(t=50, b=30, l=50, r=20),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_r, use_container_width=True)
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(f"{label} Current", f"{s.iloc[-1]:.1f}x")
+        c2.metric("Median", f"{med:.1f}x")
+        c3.metric("25th pct", f"{p25:.1f}x")
+        c4.metric("75th pct", f"{p75:.1f}x")
+        st.markdown("---")
 
 
 # ── Tab 6: Overlay ────────────────────────────────────────────────────────────
