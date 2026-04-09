@@ -524,7 +524,30 @@ def fetch_edgar(ticker: str, email: str):
     if facts is None:
         raise ValueError(f"No EDGAR facts for {ticker}")
 
+    # ── Raw DataFrame for ANNUAL aggregation (income / BS / CF) ──────────────
+    # Uses the multi-fallback _facts_to_df path which handles API variations.
     raw = _facts_to_df(facts)
+
+    # ── Raw DataFrame for QUARTERLY subtraction ───────────────────────────────
+    # Mirrors _edgar_fetch_quarters in the tkinter dashboard EXACTLY:
+    #   facts.to_pandas() → rename → raw["concept"] = namespace + ":" + concept
+    # This is the proven path that produces the EDGAR Quarter Picker data.
+    try:
+        raw_q = facts.to_pandas()
+        raw_q = raw_q.rename(columns={
+            "form":  "form_type",
+            "end":   "period_end",
+            "start": "period_start",
+            "val":   "numeric_value",
+            "accn":  "accession_no",
+            "filed": "filing_date",
+            "fact":  "concept",
+        })
+        # Unconditional prefix — same single line as the tkinter picker
+        raw_q["concept"] = raw_q["namespace"].astype(str) + ":" + raw_q["concept"].astype(str)
+    except Exception:
+        # Fall back to the already-processed raw if to_pandas() is unavailable
+        raw_q = raw
 
     # ── Debug: stash raw info in cache for the UI to show ────────────────────
     _debug = {
@@ -596,7 +619,7 @@ def fetch_edgar(ticker: str, email: str):
     )
 
     # ── Quarterly individual quarters ─────────────────────────────────────────
-    quarterly_df = _build_quarterly(raw)
+    quarterly_df = _build_quarterly(raw_q)
 
     return income_df, bs_df, cf_df, quarterly_df, raw
 
